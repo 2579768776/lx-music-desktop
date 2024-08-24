@@ -1,30 +1,42 @@
 <template>
   <div :class="$style.content">
-    <canvas :class="$style.canvas" ref="dom_canvas"></canvas>
+    <canvas ref="dom_canvas" :class="$style.canvas" />
   </div>
 </template>
 
 <script>
-import { ref, onBeforeUnmount, onMounted, useRefGetter, watch } from '@renderer/utils/vueTools'
+import { ref, onBeforeUnmount, onMounted } from '@common/utils/vueTools'
 import { getAnalyser } from '@renderer/plugins/player'
-import { isPlay } from '@renderer/core/share/player'
-import { player as eventPlayerNames } from '@renderer/event/names'
+import { isPlay } from '@renderer/store/player/state'
+// import { appSetting } from '@renderer/store/setting'
 
-const themes = {
-  green: 'rgba(77,175,124,.16)',
-  blue: 'rgba(52,152,219,.16)',
-  yellow: 'rgba(233,212,96,.22)',
-  orange: 'rgba(245,171,53,.16)',
-  red: 'rgba(214,69,65,.12)',
-  pink: 'rgba(241,130,141,.16)',
-  purple: 'rgba(155,89,182,.14)',
-  grey: 'rgba(108,122,137,.16)',
-  ming: 'rgba(51,110,123,.14)',
-  blue2: 'rgba(79,98,208,.14)',
-  black: 'rgba(39,39,39,.4)',
-  mid_autumn: 'rgba(74,55,82,.1)',
-  naruto: 'rgba(87,144,167,.14)',
-  happy_new_year: 'rgba(192,57,43,.1)',
+// const themes = {
+//   green: 'rgba(77,175,124,.16)',
+//   blue: 'rgba(52,152,219,.16)',
+//   yellow: 'rgba(233,212,96,.22)',
+//   orange: 'rgba(245,171,53,.16)',
+//   red: 'rgba(214,69,65,.12)',
+//   pink: 'rgba(241,130,141,.16)',
+//   purple: 'rgba(155,89,182,.14)',
+//   grey: 'rgba(108,122,137,.16)',
+//   ming: 'rgba(51,110,123,.14)',
+//   blue2: 'rgba(79,98,208,.14)',
+//   black: 'rgba(39,39,39,.4)',
+//   mid_autumn: 'rgba(74,55,82,.1)',
+//   naruto: 'rgba(87,144,167,.15)',
+//   happy_new_year: 'rgba(192,57,43,.1)',
+// }
+
+const getBarWidth = canvasWidth => {
+  let barWidth = (canvasWidth / 128) * 2.5
+  const width = canvasWidth / 86
+  const diffWidth = barWidth - width
+  // console.log(barWidth - width)
+  // if (barWidth - width > 20) newBarWidth = 20
+  // barWidth = newBarWidth
+  return diffWidth > 32
+    ? canvasWidth / 128 // 4k屏、超宽屏直接显示所有频谱条
+    : diffWidth > 12 ? width : barWidth
 }
 export default {
   setup() {
@@ -32,10 +44,11 @@ export default {
     const analyser = getAnalyser()
 
     let ctx
-    let bufferLength
+    let bufferLength = 0
     let dataArray
     let WIDTH
     let HEIGHT
+    let MAX_HEIGHT
     let barWidth
     let barHeight
     let x = 0
@@ -47,18 +60,15 @@ export default {
     const maxNum = 255
     let frequencyAvg = 0
 
-    const theme = useRefGetter('theme')
+    // const theme = useRefGetter('theme')
     // const setting = useRefGetter('setting')
-    let themeColor = themes[theme.value || 'green']
-    watch(theme, theme => {
-      themeColor = themes[theme || 'green']
-    })
+    let themeColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary-light-200-alpha-800')
+    // watch(theme, theme => {
+    //   themeColor = themes[theme || 'green']
+    // })
 
     // https://developer.mozilla.org/zh-CN/docs/Web/API/AnalyserNode/smoothingTimeConstant
     const renderFrame = () => {
-      animationFrameId = null
-      if (isPlaying) animationFrameId = window.requestAnimationFrame(renderFrame)
-
       x = 0
 
       analyser.getByteFrequencyData(dataArray)
@@ -89,19 +99,22 @@ export default {
         // let b = 50
 
         // ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')'
-        barHeight = barHeight * frequencyAvg + barHeight * 0.42
+        barHeight = (barHeight * frequencyAvg + barHeight * 0.42) * MAX_HEIGHT
         ctx.fillRect(x, HEIGHT - barHeight, barWidth, barHeight)
 
         x += barWidth
       }
+
+      animationFrameId = null
+      if (isPlaying) animationFrameId = window.requestAnimationFrame(renderFrame)
     }
 
     const handlePlay = () => {
       isPlaying = true
-      analyser.fftSize = 256
+      // analyser.fftSize = 256
       bufferLength = analyser.frequencyBinCount
       // console.log(bufferLength)
-      barWidth = (WIDTH / bufferLength) * 2.5
+      barWidth = getBarWidth(WIDTH)
       dataArray = new Uint8Array(bufferLength)
       renderFrame()
     }
@@ -110,14 +123,27 @@ export default {
       isPlaying = false
     }
 
-    window.eventHub.on(eventPlayerNames.play, handlePlay)
-    window.eventHub.on(eventPlayerNames.pause, handlePause)
-    window.eventHub.on(eventPlayerNames.error, handlePause)
+    const handleResize = () => {
+      const canvas = dom_canvas.value
+      canvas.width = canvas.clientWidth
+      canvas.height = canvas.clientHeight
+      WIDTH = canvas.width
+      HEIGHT = canvas.height
+      MAX_HEIGHT = Math.round(HEIGHT * 0.4 / 255 * 10000) / 10000
+      // console.log(MAX_HEIGHT)
+      barWidth = getBarWidth(WIDTH)
+    }
+
+    window.app_event.on('play', handlePlay)
+    window.app_event.on('pause', handlePause)
+    window.app_event.on('error', handlePause)
+    window.addEventListener('resize', handleResize)
     onBeforeUnmount(() => {
       handlePause()
-      window.eventHub.off(eventPlayerNames.play, handlePlay)
-      window.eventHub.off(eventPlayerNames.pause, handlePause)
-      window.eventHub.off(eventPlayerNames.error, handlePause)
+      window.app_event.off('play', handlePlay)
+      window.app_event.off('pause', handlePause)
+      window.app_event.off('error', handlePause)
+      window.removeEventListener('resize', handleResize)
     })
 
     onMounted(() => {
@@ -127,6 +153,8 @@ export default {
       canvas.height = canvas.clientHeight
       WIDTH = canvas.width
       HEIGHT = canvas.height
+      MAX_HEIGHT = Math.round(HEIGHT * 0.4 / 255 * 10000) / 10000
+      // console.log(MAX_HEIGHT)
       if (isPlay.value) handlePlay()
     })
 
